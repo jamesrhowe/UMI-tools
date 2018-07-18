@@ -20,11 +20,11 @@ matrix:
           env: TEST_STYLE=1
 
 before_install:
-  - .travis/before_install.sh
+  - bash .travis/before_install.sh
 install:
   - python setup.py install
 
 before_script:
-  - .travis/before_script.sh
+  - bash .travis/before_script.sh
 script: 
-  - ./test_umi_tools.sh
+  - bash .travis/test_umi_tools.sh
