@@ -17,19 +17,21 @@ matrix:
           env: TEST_STYLE=1
 
 before_install:
+# required to identify the correct pip. Shameless copied from https://github.com/secdev/scapy/blob/master/.travis/install.sh
+  - PIP=`which pip || (python --version 2>&1 | grep -q 'Python 2' && which pip2) || (python --version 2>&1 | grep -q 'Python 3' && which pip3)`
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update ; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew upgrade python; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install freetype; fi
-  - pip install cython
-  - pip install pandas==0.19
-  - pip install scipy
+  - $PIP install cython
+  - $PIP install pandas==0.19
+  - $PIP install scipy
 install:
   - python setup.py install
 
 before_script:
-  - pip install nose
-  - pip install pep8
-  - pip install pyyaml
+  - $PIP install nose
+  - $PIP install pep8
+  - $PIP install pyyaml
 
 script: 
   - ./test_umi_tools.sh
