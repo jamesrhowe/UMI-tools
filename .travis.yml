@@ -22,7 +22,7 @@ matrix:
 before_install:
   - bash .travis/before_install.sh
 install:
-  - python setup.py install
+if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then python3 setup.py install ; else python setup.py install; fi
 
 before_script:
   - bash .travis/before_script.sh
