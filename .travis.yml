@@ -20,6 +20,7 @@ matrix:
           env: TEST_STYLE=1
 
 before_install:
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update ; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew upgrade python; fi
 # required to identify the correct pip. Shameless copied from https://github.com/secdev/scapy/blob/master/.travis/install.sh
   - PIP=`which pip || (python --version 2>&1 | grep -q 'Python 2' && which pip2) || (python --version 2>&1 | grep -q 'Python 3' && which pip3)`
