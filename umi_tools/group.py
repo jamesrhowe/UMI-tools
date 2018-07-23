@@ -270,34 +270,36 @@ def main(argv=None):
                 for read, read2 in izip(reads, read2s):
 
                     # TS: need to decide what to do here?..
-                    if not read or not read2:
-                        continue
+                    #if not read or not read2:
+                    #    continue
 
                     if outfile:
                         # Add the 'UG' tag to the read
-                        read.tags += [('UG', unique_id)]
-                        read.tags += [(options.umi_group_tag, top_umi)]
-                        outfile.write(read)
+                        if read:
+                            read.tags += [('UG', unique_id)]
+                            read.tags += [(options.umi_group_tag, top_umi)]
+                            outfile.write(read)
 
                         if options.paired:
                             # Add the 'UG' tag to the read
-                            read2.tags += [('UG', unique_id)]
-                            read2.tags += [(options.umi_group_tag, top_umi)]
-                            outfile.write(read2)
+                            if read2:
+                                read2.tags += [('UG', unique_id)]
+                                read2.tags += [(options.umi_group_tag, top_umi)]
+                                outfile.write(read2)
 
                     if options.tsv:
-                        if options.per_gene:
+                        if options.per_gene and read:
                             gene = read.get_tag(gene_tag)
                         else:
                             gene = "NA"
 
-                        read_position = umi_methods.get_read_position(
+                        read_position, read2_position = "NA", "NA"
+                        if read:
+                            read_position = umi_methods.get_read_position(
                                 read, options.soft_clip_threshold)[1]
-                        if options.paired:
+                        if options.paired and read2:
                             read2_position = umi_methods.get_read_position(
                                 read2, options.soft_clip_threshold)[1]
-                        else:
-                            read2_position = "NA"
 
                         mapping_outfile.write("%s\n" % "\t".join(map(str,(
                             read.query_name, read.reference_name,

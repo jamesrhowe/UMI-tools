@@ -1437,10 +1437,10 @@ class get_bundles:
 
     def __call__(self, inreads):
 
-        r2_pos = 0
-        r_length = None
-
         for read, read2 in self.get_reads(inreads):
+
+            r2_pos = 0
+            r_length = None
 
             #if read.is_read2:
             #    if self.return_read2:
@@ -1491,12 +1491,8 @@ class get_bundles:
                 if read2 and read2.mapq < self.options.mapping_quality:
                     self.read_events['< MAPQ threshold'] += 1
                     continue
-            try:
-                self.current_chr = read.reference_name
-            except:
-                print(read)
-                print(read2)
-                raise ValueError()
+
+            self.current_chr = read.reference_name
 
             if self.options.per_gene:
 
@@ -1559,8 +1555,8 @@ class get_bundles:
                         if p in self.read_counts:
                             del self.read_counts[p]
 
+                self.last_pos = self.start
                 self.last_chr = self.current_chr
-                self.last_pos = start
 
                 if self.options.read_length:
                     r_length = read.query_length                    
