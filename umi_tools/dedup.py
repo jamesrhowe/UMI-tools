@@ -286,11 +286,10 @@ def main(argv=None):
             for read in reads: 
                 if options.paired:
                     # TS: need to decide what to do here?..
-                    if not read[1]:
-                        continue
-
-                    outfile.write(read[0])
-                    outfile.write(read[1])
+                    if read[0]:
+                        outfile.write(read[0])
+                    if read[1]:
+                        outfile.write(read[1])
                 else:
                     outfile.write(read[0])
                 nOutput += 1

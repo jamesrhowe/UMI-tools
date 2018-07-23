@@ -190,7 +190,7 @@ def main(argv=None):
     if options.tsv:
         mapping_outfile = U.openFile(options.tsv, "w")
         mapping_outfile.write("%s\n" % "\t".join(
-            ["read_id", "contig", "position", "position2", "gene", "umi", "umi_count",
+            ["read_id", "contig", "position", "position2", "tlen", "gene", "umi", "umi_count",
              "final_umi", "final_umi_count", "unique_id"]))
 
     # TS: if paired, perform a custom sort (read1 position, then read_id)
@@ -303,7 +303,7 @@ def main(argv=None):
 
                         mapping_outfile.write("%s\n" % "\t".join(map(str,(
                             read.query_name, read.reference_name,
-                            read_position, read2_position,
+                            read_position, read2_position, read.tlen,
                             gene,
                             umi.decode(),
                             counts[umi],
