@@ -13,8 +13,10 @@ from __future__ import absolute_import
 import itertools
 import collections
 import random
-import pysam
 import re
+import os
+import pysam
+
 from scipy.stats import gaussian_kde
 from scipy.signal import argrelextrema
 import matplotlib
@@ -1008,7 +1010,36 @@ class ExtractFilterAndUpdate:
         else:
             return read1, read2
 
+def CustomSort(infile):
+    # TS: Makes a custom sorted input on the following assumption:
+    # 1. All reads pairs have at most 1 alignment for each read,
+    # e.g no multi-mapping, no hardclipping.
+    tagged_tmp = U.getTempFilename()
+    sorted_tmp = U.getTempFilename()
 
+    tmp_outbam = pysam.Samfile(tagged_tmp, "wb", template=infile)
+    for read in infile.fetch(until_eof=True):
+
+        if read.is_unmapped or read.mate_is_unmapped:
+            # TS: currently skipped read paired when they are not both matched
+            continue
+
+        # TS: any other filtering here? - Non-valid pairs?
+        if read.is_read2:
+            read.tags += [("RS", read.next_reference_start)]
+        else:
+            read.tags += [("RS", read.pos)]
+        tmp_outbam.write(read)
+    tmp_outbam.close()
+
+    # -t RS -n = sort by RS tag, then read name
+    pysam.sort("-t", "RS", "-n", "-o", sorted_tmp, tagged_tmp)
+
+    os.unlink(tagged_tmp)
+
+    return(sorted_tmp)
+
+# TS: can delete this when sort method has been implemented?
 class TwoPassPairWriter:
     '''This class makes a note of reads that need their pair outputting
     before outputting.  When the chromosome changes, the reads on that
@@ -1107,6 +1138,8 @@ def getMetaContig2contig(bamfile, gene_transcript_map):
     return metacontig2contig
 
 
+# TS: This has been broken by new paired end sort since bamfile is custom sorted
+# = not indexed so can't retrieve contigs
 def metafetcher(bamfile, metacontig2contig, metatag):
     ''' return reads in order of metacontigs'''
     for metacontig in metacontig2contig:
@@ -1206,8 +1239,8 @@ class get_bundles:
         self.options = options
         self.only_count_reads = only_count_reads
         self.all_reads = all_reads
-        self.return_unmapped = return_unmapped
-        self.return_read2 = return_read2
+        #self.return_unmapped = return_unmapped
+        #self.return_read2 = return_read2
         self.metacontig_contig = metacontig_contig
 
         self.contig_metacontig = {}
@@ -1260,10 +1293,47 @@ class get_bundles:
         self.read_counts = collections.defaultdict(
             lambda: collections.defaultdict(dict))
 
-    def update_dicts(self, read, pos, key, umi):
+        def paired_get_reads(inreads):
+
+            last_read_qname = None
+            read1, read2 = None, None
+
+            for read in inreads:
+
+                if last_read_qname and (read.query_name != last_read_qname):
+
+                    # TS: strict requirement to have two reads for paired input!
+                    # Not sure if this is the correct place for such filtering?
+                    #if read1 and read2:
+                    yield(read1, read2)
+                    read1, read2 = None, None
+
+                if read.is_read1:
+                    read1 = read
+                else:
+                    read2 = read
+
+                last_read_qname = read.query_name
+
+            yield(read1, read2)
+
+        def single_get_reads(inreads):
+            for read in inreads:
+                return(read, None)
+
+        if self.options.paired:
+            self.get_reads = paired_get_reads
+        else:
+            self.get_reads = single_get_reads
+
+    def update_dicts(self, read, read2, pos, key, umi):
 
         # The content of the reads_dict depends on whether all reads
         # are being retained
+
+        def SetSelectedReads(read, read2):
+            self.reads_dict[pos][key][umi]["read"] = read
+            self.reads_dict[pos][key][umi]["read2"] = read2
 
         if self.all_reads:
             # retain all reads per key
@@ -1272,8 +1342,10 @@ class get_bundles:
             except KeyError:
                 self.reads_dict[pos][key][umi]["read"] = [read]
                 self.reads_dict[pos][key][umi]["count"] = 1
+                self.reads_dict[pos][key][umi]["read2"] = [read2]
             else:
                 self.reads_dict[pos][key][umi]["read"].append(read)
+                self.reads_dict[pos][key][umi]["read2"].append(read2)
 
         elif self.only_count_reads:
             # retain all reads per key
@@ -1287,15 +1359,16 @@ class get_bundles:
             try:
                 self.reads_dict[pos][key][umi]["count"] += 1
             except KeyError:
-                self.reads_dict[pos][key][umi]["read"] = read
+                SetSelectedReads(read, read2)
                 self.reads_dict[pos][key][umi]["count"] = 1
                 self.read_counts[pos][key][umi] = 0
+
             else:
                 if self.reads_dict[pos][key][umi]["read"].mapq > read.mapq:
                     return
 
                 if self.reads_dict[pos][key][umi]["read"].mapq < read.mapq:
-                    self.reads_dict[pos][key][umi]["read"] = read
+                    SetSelectedReads(read, read2)
                     self.read_counts[pos][key][umi] = 0
                     return
 
@@ -1307,21 +1380,21 @@ class get_bundles:
                         return
                     elif (self.reads_dict[pos][key][umi]["read"].opt(tag) >
                           read.opt(tag)):
-                        self.reads_dict[pos][key][umi]["read"] = read
+                        SetSelectedReads(read, read2)
                         self.read_counts[pos][key][umi] = 0
 
                 elif self.options.detection_method == "XT":
                     if self.reads_dict[pos][key][umi]["read"].opt("XT") == "U":
                         return
                     elif read.opt("XT") == "U":
-                        self.reads_dict[pos][key][umi]["read"] = read
+                        SetSelectedReads(read, read2)
                         self.read_counts[pos][key][umi] = 0
 
                 self.read_counts[pos][key][umi] += 1
                 prob = 1.0/self.read_counts[pos][key][umi]
 
                 if random.random() < prob:
-                    self.reads_dict[pos][key][umi]["read"] = read
+                    SetSelectedReads(read, read2)
 
     def check_output(self):
 
@@ -1364,40 +1437,47 @@ class get_bundles:
 
     def __call__(self, inreads):
 
-        for read in inreads:
+        r2_pos = 0
+        r_length = None
 
-            if read.is_read2:
-                if self.return_read2:
-                    if not read.is_unmapped or (
-                            read.is_unmapped and self.return_unmapped):
-                        yield read, None, "single_read"
-                continue
-            else:
-                self.read_events['Input Reads'] += 1
+        for read, read2 in self.get_reads(inreads):
 
-            if read.is_unmapped:
-                if self.options.paired:
-                    if read.mate_is_unmapped:
-                        self.read_events['Both unmapped'] += 1
-                    else:
-                        self.read_events['Read 1 unmapped'] += 1
-                else:
-                    self.read_events['Single end unmapped'] += 1
+            #if read.is_read2:
+            #    if self.return_read2:
+            #        if not read.is_unmapped or (
+            #                read.is_unmapped and self.return_unmapped):
+            #            yield read, None, "single_read"
+            #    continue
+            #else:
+            
+            self.read_events['Input Reads'] += 1
 
-                if self.return_unmapped:
-                    self.read_events['Input Reads'] += 1
-                    yield read, None, "single_read"
-                continue
+            #if read1.is_unmapped:
+            #    if self.options.paired:
+            #        if read.mate_is_unmapped:
+            #            self.read_events['Both unmapped'] += 1
+            #        else:
+            #            self.read_events['Read 1 unmapped'] += 1
+            #    else:
+            #        self.read_events['Single end unmapped'] += 1
 
-            if read.mate_is_unmapped and self.options.paired:
-                if not read.is_unmapped:
-                    self.read_events['Read 2 unmapped'] += 1
-                if self.return_unmapped:
-                    yield read, None, "single_read"
-                continue
+            #    if self.return_unmapped:
+            #        self.read_events['Input Reads'] += 1
+            #        yield read, None, "single_read"
+            #    continue
+
+            #if read.mate_is_unmapped and self.options.paired:
+            #    if not read.is_unmapped:
+            #        self.read_events['Read 2 unmapped'] += 1
+            #    if self.return_unmapped:
+            #        yield read, None, "single_read"
+            #    continue
 
             if self.options.paired:
                 self.read_events['Paired Reads'] += 1
+                if not read and read2:
+                    self.read_events['Incomplete paired Reads'] += 1
+                    continue
 
             if self.options.subset:
                 if random.random() >= self.options.subset:
@@ -1408,8 +1488,15 @@ class get_bundles:
                 if read.mapq < self.options.mapping_quality:
                     self.read_events['< MAPQ threshold'] += 1
                     continue
-
-            self.current_chr = read.reference_name
+                if read2 and read2.mapq < self.options.mapping_quality:
+                    self.read_events['< MAPQ threshold'] += 1
+                    continue
+            try:
+                self.current_chr = read.reference_name
+            except:
+                print(read)
+                print(read2)
+                raise ValueError()
 
             if self.options.per_gene:
 
@@ -1455,7 +1542,12 @@ class get_bundles:
 
                 start, pos, is_spliced = get_read_position(
                     read, self.options.soft_clip_threshold)
-
+                
+                if read2:
+                    # not currently using r2_start or r2_is_spliced...
+                    r2_start, r2_pos, r2_is_spliced = get_read_position(
+                        read2, self.options.soft_clip_threshold)
+                
                 do_output, out_keys = self.check_output()
 
                 if do_output:
@@ -1467,16 +1559,14 @@ class get_bundles:
                         if p in self.read_counts:
                             del self.read_counts[p]
 
-                self.last_pos = self.start
                 self.last_chr = self.current_chr
+                self.last_pos = start
 
                 if self.options.read_length:
-                    r_length = read.query_length
-                else:
-                    r_length = 0
+                    r_length = read.query_length                    
 
                 key = (read.is_reverse, self.options.spliced & is_spliced,
-                       self.options.paired*read.tlen, r_length)
+                       self.options.paired*r2_pos, r_length)
 
             # get the umi +/- cell barcode and update dictionaries
             if self.options.ignore_umi:
@@ -1489,7 +1579,7 @@ class get_bundles:
                 umi, cell = self.barcode_getter(read)
 
             key = (key, cell)
-            self.update_dicts(read, pos, key, umi)
+            self.update_dicts(read, read2, pos, key, umi)
 
             if self.metacontig_contig:
                 # keep track of observed contigs for each gene

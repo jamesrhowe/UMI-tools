@@ -182,8 +182,10 @@ def main(argv=None):
     infile = pysam.Samfile(in_name, in_mode)
     outfile = pysam.Samfile(out_name, out_mode, template=infile)
 
+    # TS: if paired, perform a custom sort (read1 position, then read_id)
     if options.paired:
-        outfile = umi_methods.TwoPassPairWriter(infile, outfile)
+        sorted_tmp = umi_methods.CustomSort(infile)
+        infile = pysam.Samfile(sorted_tmp, "rb")
 
     nInput, nOutput, input_reads, output_reads = 0, 0, 0, 0
 
@@ -207,6 +209,8 @@ def main(argv=None):
     metacontig2contig = None
 
     if options.chrom:
+        # TS: Note this will now error with paired input since we have
+        # made a BAM which cannot be indexed as it is not purely position sorted
         inreads = infile.fetch(reference=options.chrom)
 
     else:
@@ -218,7 +222,7 @@ def main(argv=None):
             gene_tag = metatag
 
         else:
-            inreads = infile.fetch()
+            inreads = infile.fetch(until_eof=True)
 
     # set up ReadCluster functor with methods specific to
     # specified options.method
@@ -263,10 +267,14 @@ def main(argv=None):
             average_distance_null = umi_methods.get_average_umi_distance(random_umis)
             pre_cluster_stats_null.append(average_distance_null)
 
+
         if options.ignore_umi:
             for umi in bundle:
                 nOutput += 1
                 outfile.write(bundle[umi]["read"])
+                # TS Need to check this works
+                if options.paired:
+                    outfile.write(bundle[umi]["read2"])                    
 
         else:
 
@@ -275,18 +283,26 @@ def main(argv=None):
                 bundle=bundle,
                 threshold=options.threshold)
 
-            for read in reads:
-                outfile.write(read)
+            for read in reads: 
+                if options.paired:
+                    # TS: need to decide what to do here?..
+                    if not read[1]:
+                        continue
+
+                    outfile.write(read[0])
+                    outfile.write(read[1])
+                else:
+                    outfile.write(read[0])
                 nOutput += 1
 
             if options.stats:
 
-                # collect pre-dudupe stats
+                # collect pre-dudup stats
                 stats_pre_df_dict['UMI'].extend(bundle)
                 stats_pre_df_dict['counts'].extend(
                     [bundle[UMI]['count'] for UMI in bundle])
 
-                # collect post-dudupe stats
+                # collect post-dudup stats
                 post_cluster_umis = [bundle_iterator.barcode_getter(x)[0] for x in reads]
                 stats_post_df_dict['UMI'].extend(umis)
                 stats_post_df_dict['counts'].extend(umi_counts)
@@ -300,6 +316,9 @@ def main(argv=None):
                 post_cluster_stats_null.append(average_distance_null)
 
     outfile.close()
+
+    if options.paired:
+        os.unlink(sorted_tmp)
 
     if not options.no_sort_output:
         # sort the output

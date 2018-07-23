@@ -86,6 +86,14 @@ from future.utils import iteritems
 
 import pysam
 
+# python 3 doesn't require izip
+try:
+    # Python 2
+    from itertools import izip
+except ImportError:
+    # Python 3
+    izip = zip
+
 import umi_tools.Utilities as U
 import umi_tools.network as network
 import umi_tools.umi_methods as umi_methods
@@ -182,8 +190,13 @@ def main(argv=None):
     if options.tsv:
         mapping_outfile = U.openFile(options.tsv, "w")
         mapping_outfile.write("%s\n" % "\t".join(
-            ["read_id", "contig", "position", "gene", "umi", "umi_count",
+            ["read_id", "contig", "position", "position2", "gene", "umi", "umi_count",
              "final_umi", "final_umi_count", "unique_id"]))
+
+    # TS: if paired, perform a custom sort (read1 position, then read_id)
+    if options.paired:
+        sorted_tmp = umi_methods.CustomSort(infile)
+        infile = pysam.Samfile(sorted_tmp, "rb")
 
     nInput, nOutput, unique_id, input_reads, output_reads = 0, 0, 0, 0, 0
 
@@ -201,13 +214,13 @@ def main(argv=None):
             gene_tag = metatag
 
         else:
-            inreads = infile.fetch(until_eof=options.output_unmapped)
+            inreads = infile.fetch(until_eof=True)#options.output_unmapped)
 
     bundle_iterator = umi_methods.get_bundles(
         options,
         all_reads=True,
-        return_read2=True,
-        return_unmapped=options.output_unmapped,
+        #return_read2=True,
+        #return_unmapped=options.output_unmapped,
         metacontig_contig=metacontig2contig)
 
     for bundle, key, status in bundle_iterator(inreads):
@@ -253,22 +266,42 @@ def main(argv=None):
 
             for umi in umi_group:
                 reads = bundle[umi]['read']
-                for read in reads:
+                read2s = bundle[umi]['read2']
+                for read, read2 in izip(reads, read2s):
+
+                    # TS: need to decide what to do here?..
+                    if not read or not read2:
+                        continue
+
                     if outfile:
                         # Add the 'UG' tag to the read
                         read.tags += [('UG', unique_id)]
                         read.tags += [(options.umi_group_tag, top_umi)]
                         outfile.write(read)
 
+                        if options.paired:
+                            # Add the 'UG' tag to the read
+                            read2.tags += [('UG', unique_id)]
+                            read2.tags += [(options.umi_group_tag, top_umi)]
+                            outfile.write(read2)
+
                     if options.tsv:
                         if options.per_gene:
                             gene = read.get_tag(gene_tag)
                         else:
                             gene = "NA"
-                        mapping_outfile.write("%s\n" % "\t".join(map(str, (
+
+                        read_position = umi_methods.get_read_position(
+                                read, options.soft_clip_threshold)[1]
+                        if options.paired:
+                            read2_position = umi_methods.get_read_position(
+                                read2, options.soft_clip_threshold)[1]
+                        else:
+                            read2_position = "NA"
+
+                        mapping_outfile.write("%s\n" % "\t".join(map(str,(
                             read.query_name, read.reference_name,
-                            umi_methods.get_read_position(
-                                read, options.soft_clip_threshold)[1],
+                            read_position, read2_position,
                             gene,
                             umi.decode(),
                             counts[umi],
@@ -279,6 +312,9 @@ def main(argv=None):
                     nOutput += 1
 
             unique_id += 1
+
+    if options.paired:
+        os.unlink(sorted_tmp)
 
     if outfile:
         outfile.close()
