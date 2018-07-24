@@ -1018,6 +1018,7 @@ def CustomSort(infile):
     sorted_tmp = U.getTempFilename()
 
     tmp_outbam = pysam.Samfile(tagged_tmp, "wb", template=infile)
+    U.info("Writing out tagged reads to temporary BAM: %s" % tagged_tmp)
     for read in infile.fetch(until_eof=True):
 
         if read.is_unmapped or read.mate_is_unmapped:
@@ -1033,6 +1034,7 @@ def CustomSort(infile):
     tmp_outbam.close()
 
     # -t RS -n = sort by RS tag, then read name
+    U.info("Sorting tagged reads to temporary BAM: %s" % sorted_tmp)
     pysam.sort("-t", "RS", "-n", "-o", sorted_tmp, tagged_tmp)
 
     os.unlink(tagged_tmp)

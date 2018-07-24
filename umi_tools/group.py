@@ -241,8 +241,8 @@ def main(argv=None):
 
         nInput += sum(counts.values())
 
-        while nOutput >= output_reads + 10000:
-            output_reads += 10000
+        while nOutput >= output_reads + 1000000:
+            output_reads += 1000000
             U.info("Written out %i reads" % output_reads)
 
         while nInput >= input_reads + 1000000:
