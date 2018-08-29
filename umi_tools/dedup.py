@@ -397,9 +397,10 @@ def main(argv=None):
             U.warn("The BAM did not contain any valid "
                    "reads/read pairs for deduplication")
 
-    U.info("%i UMIs were in a group where the top UMI was not a "
-           "whitelist UMI and were therefore "
-           "discarded" % processor.umi_whitelist_counts["Non-whitelist UMI"])
+    if options.filter_umi:
+        U.info("%i UMIs were in a group where the top UMI was not a "
+               "whitelist UMI and were therefore "
+               "discarded" % processor.umi_whitelist_counts["Non-whitelist UMI"])
 
     U.Stop()
 
