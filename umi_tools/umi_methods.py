@@ -1484,7 +1484,7 @@ class get_bundles:
 
         def single_get_reads(inreads):
             for read in inreads:
-                return(read, None)
+                yield(read, None)
 
         if self.options.paired:
             self.get_reads = paired_get_reads
@@ -1497,8 +1497,10 @@ class get_bundles:
         # are being retained
 
         def SetSelectedReads(read, read2):
+            # set the reads as the selected "top" read for the bundle key
             self.reads_dict[pos][key][umi]["read"] = read
             self.reads_dict[pos][key][umi]["read2"] = read2
+            self.read_counts[pos][key][umi] = 1
 
         if self.all_reads:
             # retain all reads per key
@@ -1513,7 +1515,7 @@ class get_bundles:
                 self.reads_dict[pos][key][umi]["read2"].append(read2)
 
         elif self.only_count_reads:
-            # retain all reads per key
+            # only count reads
             try:
                 self.reads_dict[pos][key][umi]["count"] += 1
             except KeyError:
@@ -1526,18 +1528,17 @@ class get_bundles:
             except KeyError:
                 SetSelectedReads(read, read2)
                 self.reads_dict[pos][key][umi]["count"] = 1
-                self.read_counts[pos][key][umi] = 0
-
+                return
             else:
+                # First check if MAPQ is better than previous best
                 if self.reads_dict[pos][key][umi]["read"].mapq > read.mapq:
                     return
 
                 if self.reads_dict[pos][key][umi]["read"].mapq < read.mapq:
                     SetSelectedReads(read, read2)
-                    self.read_counts[pos][key][umi] = 0
                     return
 
-                # TS: implemented different checks for multimapping here
+                # If MAPQ is identical, check multimapping
                 if self.options.detection_method in ["NH", "X0"]:
                     tag = self.options.detection_method
                     if (self.reads_dict[pos][key][umi]["read"].opt(tag) <
@@ -1546,15 +1547,18 @@ class get_bundles:
                     elif (self.reads_dict[pos][key][umi]["read"].opt(tag) >
                           read.opt(tag)):
                         SetSelectedReads(read, read2)
-                        self.read_counts[pos][key][umi] = 0
+                        return 
 
                 elif self.options.detection_method == "XT":
                     if self.reads_dict[pos][key][umi]["read"].opt("XT") == "U":
                         return
                     elif read.opt("XT") == "U":
                         SetSelectedReads(read, read2)
-                        self.read_counts[pos][key][umi] = 0
+                        return
 
+                # If we've reached here, the MAPQ and multimapping
+                # (if using) must be the same, as the previous
+                # "top" read, so select read at random
                 self.read_counts[pos][key][umi] += 1
                 prob = 1.0/self.read_counts[pos][key][umi]
 
@@ -1601,7 +1605,7 @@ class get_bundles:
         return do_output, out_keys
 
     def __call__(self, inreads):
-
+            
         for read, read2 in self.get_reads(inreads):
 
             r2_pos = 0

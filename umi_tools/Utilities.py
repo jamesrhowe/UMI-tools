@@ -1034,6 +1034,10 @@ def validateSamOptions(options):
             raise ValueError("skip-regex '%s' is not a "
                              "valid regex" % options.skip_regex)
 
+    if options.chrom and options.paired:
+        # TS: Single chr will now error with paired input since we have
+        # made a BAM which cannot be indexed as it is not purely position sorted
+        raise ValueError("Cannot use --chrom with paired end input")
 
 def Stop():
     """stop the experiment.
