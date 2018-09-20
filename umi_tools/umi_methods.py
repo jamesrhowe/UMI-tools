@@ -1184,6 +1184,7 @@ def CustomSort(infile):
     tagged_tmp = U.getTempFilename()
     sorted_tmp = U.getTempFilename()
 
+    # TS: would this be quicker if we write out temporary SAM not BAM?
     tmp_outbam = pysam.Samfile(tagged_tmp, "wb", template=infile)
     U.info("Writing out tagged reads to temporary BAM: %s" % tagged_tmp)
     for read in infile.fetch(until_eof=True):
@@ -1204,7 +1205,7 @@ def CustomSort(infile):
     U.info("Sorting tagged reads to temporary BAM: %s" % sorted_tmp)
     pysam.sort("-t", "RS", "-n", "-o", sorted_tmp, tagged_tmp)
 
-    os.unlink(tagged_tmp)
+    #os.unlink(tagged_tmp)
 
     return(sorted_tmp)
 
@@ -1469,8 +1470,8 @@ class get_bundles:
 
                     # TS: strict requirement to have two reads for paired input!
                     # Not sure if this is the correct place for such filtering?
-                    #if read1 and read2:
-                    yield(read1, read2)
+                    if read1 and read2:
+                        yield(read1, read2)
                     read1, read2 = None, None
 
                 if read.is_read1:
@@ -1480,7 +1481,8 @@ class get_bundles:
 
                 last_read_qname = read.query_name
 
-            yield(read1, read2)
+            if read1 and read2:
+                yield(read1, read2)
 
         def single_get_reads(inreads):
             for read in inreads:
@@ -1611,7 +1613,14 @@ class get_bundles:
             r2_pos = 0
             r_length = None
 
-            #if read.is_read2:
+            if read.is_read2:
+                if self.options.paired:
+                    raise ValueError(
+                        "Reads are being processed incorrectly. Please report "
+                        "this @ https://github.com/CGATOxford/UMI-tools/")
+                else:
+                    raise ValueError("Paired reads detected. Please use option --paired")
+
             #    if self.return_read2:
             #        if not read.is_unmapped or (
             #                read.is_unmapped and self.return_unmapped):
