@@ -37,9 +37,17 @@ In addition, if you have some prior expectation on the maximum number
 of cells which may have been sequenced, you can provide this using the
 option --expect-cells (see below).
 
+If you don't mind if whitelist cannot identify a suitable threshold as
+you intend to inspect the plots and identify the threshold manually,
+provide the following options: --allow-threshold-error
+--plot-prefix=[PLOT_PREFIX]
 
 whitelist-specific options
 --------------------------
+
+--plot-prefix
+        Use this option to indicate the prefix for the plots and table
+        describing the set of thresholds considered for defining cell barcodes
 
 --set-cell-number
         Use this option to explicity set the number of cell barcodes
@@ -54,6 +62,10 @@ whitelist-specific options
         method will now select the first threshold (order ascendingly)
         which results in the number of cell barcodes accepted being <=
         EXPECTED_CELLS and > EXPECTED_CELLS * 0.1.
+
+--allow-threshold-error
+        This is useful if you what the command to exit with just a
+        warning if a suitable threshold cannot be selected
 
 Usage:
 ------
@@ -131,46 +143,43 @@ def main(argv=None):
     parser = U.OptionParser(version="%prog version: $Id$",
                             usage=globals()["__doc__"])
 
-    parser.add_option("-p", "--bc-pattern", dest="pattern", type="string",
-                      help="Barcode pattern")
-    parser.add_option("--bc-pattern2", dest="pattern2", type="string",
-                      help="Barcode pattern for paired reads")
-    parser.add_option("--3prime", dest="prime3", action="store_true",
-                      help="barcode is on 3' end of read.")
-    parser.add_option("--read2-in", dest="read2_in", type="string",
-                      help="file name for read pairs")
-    parser.add_option("--extract-method",
-                      dest="extract_method", type="choice",
-                      choices=["string", "regex"],
-                      help=("How to extract the umi +/- cell barcodes, Choose "
-                            "from 'string' or 'regex'"))
-    parser.add_option("--plot-prefix",
-                      dest="plot_prefix", type="string",
-                      help=("Prefix for plots to visualise the automated "
-                            "detection of the number of 'true' cell barcodes"))
-    parser.add_option("--subset-reads",
-                      dest="subset_reads", type="int",
-                      help=("Use the first N reads to automatically identify "
-                            "the true cell barcodes. If N is greater than the "
-                            "number of reads, all reads will be used"))
-    parser.add_option("--error-correct-threshold",
-                      dest="error_correct_threshold",
-                      type="int",
-                      help=("Hamming distance for correction of "
-                            "barcodes to whitelist barcodes"))
-    parser.add_option("--method",
-                      dest="method",
-                      choices=["reads", "umis"],
-                      help=("Use reads or unique umi counts per cell"))
-    parser.add_option("--expect-cells",
-                      dest="expect_cells",
-                      type="int",
-                      help=("Prior expectation on the upper limit on the "
-                            "number of cells sequenced"))
-    parser.add_option("--set-cell-number",
-                      dest="cell_number",
-                      type="int",
-                      help=("Specify the number of cell barcodes to accept"))
+    group = U.OptionGroup(parser, "whitelist-specific options")
+
+    group.add_option("--plot-prefix",
+                     dest="plot_prefix", type="string",
+                     help=("Prefix for plots to visualise the automated "
+                           "detection of the number of 'true' cell barcodes"))
+    group.add_option("--subset-reads",
+                     dest="subset_reads", type="int",
+                     help=("Use the first N reads to automatically identify "
+                           "the true cell barcodes. If N is greater than the "
+                           "number of reads, all reads will be used. "
+                           "Default is 100,000,000"))
+    group.add_option("--error-correct-threshold",
+                     dest="error_correct_threshold",
+                     type="int",
+                     help=("Hamming distance for correction of "
+                           "barcodes to whitelist barcodes"))
+    group.add_option("--method",
+                     dest="method",
+                     choices=["reads", "umis"],
+                     help=("Use reads or unique umi counts per cell"))
+    group.add_option("--expect-cells",
+                     dest="expect_cells",
+                     type="int",
+                     help=("Prior expectation on the upper limit on the "
+                           "number of cells sequenced"))
+    group.add_option("--allow-threshold-error",
+                     dest="allow_threshold_error", action="store_true",
+                     help=("Don't select a threshold. Will still "
+                           "output the plots if requested (--plot-prefix)"))
+    group.add_option("--set-cell-number",
+                     dest="cell_number",
+                     type="int",
+                     help=("Specify the number of cell barcodes to accept"))
+
+    parser.add_option_group(group)
+
     parser.set_defaults(method="reads",
                         extract_method="string",
                         filter_cell_barcodes=False,
@@ -183,12 +192,15 @@ def main(argv=None):
                         plot_prefix=None,
                         subset_reads=100000000,
                         expect_cells=False,
+                        allow_threshold_error=False,
                         cell_number=False)
 
     # add common options (-h/--help, ...) and parse command line
 
     (options, args) = U.Start(parser, argv=argv,
+                              add_extract_options=True,
                               add_group_dedup_options=False,
+                              add_umi_grouping_options=False,
                               add_sam_options=False)
 
     if options.expect_cells and options.cell_number:
@@ -370,26 +382,51 @@ def main(argv=None):
         options.error_correct_threshold,
         options.plot_prefix)
 
-    U.info("Writing out whitelist")
-    for barcode in sorted(list(cell_whitelist)):
+    if cell_whitelist:
+        U.info("Writing out whitelist")
+        total_correct_barcodes = 0
+        total_corrected_barcodes = 0
+        for barcode in sorted(list(cell_whitelist)):
 
-        if true_to_false_map:
-            corrected_barcodes = ",".join(
-                sorted(true_to_false_map[barcode]))
-            corrected_barcode_counts = ",".join(
-                map(str, [cell_barcode_counts[x] for x
-                          in sorted(true_to_false_map[barcode])]))
+            total_correct_barcodes += cell_barcode_counts[barcode]
+
+            if true_to_false_map:
+                corrected_barcodes = ",".join(
+                    sorted(true_to_false_map[barcode]))
+
+                correct_barcode_counts = [cell_barcode_counts[x] for x in
+                                          sorted(true_to_false_map[barcode])]
+                total_corrected_barcodes += sum(correct_barcode_counts)
+
+                corrected_barcode_counts = ",".join(
+                    map(str, correct_barcode_counts))
+            else:
+                corrected_barcodes, corrected_barcode_counts = "", ""
+
+            options.stdout.write("%s\t%s\t%s\t%s\n" % (
+                barcode, corrected_barcodes, cell_barcode_counts[barcode],
+                corrected_barcode_counts))
+    else:
+        msg = ("No local minima was accepted. Recommend checking the plot "
+               "output and counts per local minima (requires `--plot-prefix`"
+               "option) and then re-running with manually selected threshold "
+               "(`--set-cell-number` option)")
+
+        if options.allow_threshold_error:
+            U.info(msg)
         else:
-            corrected_barcodes, corrected_barcode_counts = "", ""
-
-        options.stdout.write("%s\t%s\t%s\t%s\n" % (
-            barcode, corrected_barcodes, cell_barcode_counts[barcode],
-            corrected_barcode_counts))
+            U.error(msg)
 
     U.info("Parsed %i reads" % n_reads)
     U.info("%i reads matched the barcode pattern" % n_cell_barcodes)
     U.info("Found %i unique cell barcodes" % len(cell_barcode_counts))
-
+    if cell_whitelist:
+        U.info("Top %s cell barcodes passed the selected threshold" %
+               len(cell_whitelist))
+        U.info("Found %i total reads matching the selected cell barcodes" %
+               total_correct_barcodes)
+        U.info("Found %i total reads which can be error corrected to the "
+               "selected cell barcodes" % total_corrected_barcodes)
     U.Stop()
 
 if __name__ == "__main__":

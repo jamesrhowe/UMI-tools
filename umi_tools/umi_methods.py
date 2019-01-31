@@ -411,20 +411,14 @@ def getCellWhitelist(cell_barcode_counts,
 
     U.info("Finished - whitelist determination")
 
-    if cell_whitelist is None:
-        U.error("No local minima was accepted. Recommend checking the plot "
-                "output and counts per local minima "
-                "(requires `--plot-prefix` option) and then re-running with "
-                "manually selected threshold (`--set-cell-number` option)")
+    true_to_false_map = None
 
-    if error_correct_threshold > 0:
+    if cell_whitelist and error_correct_threshold > 0:
         U.info("Starting - finding putative error cell barcodes")
         true_to_false_map = getErrorCorrectMapping(
             cell_barcode_counts.keys(), cell_whitelist,
             error_correct_threshold)
         U.info("Finished - finding putative error cell barcodes")
-    else:
-        true_to_false_map = None
 
     return cell_whitelist, true_to_false_map
 
@@ -651,11 +645,25 @@ def get_umi_read_string(read_id, sep="_"):
     specified separator '''
 
     try:
-        return read_id.split(sep)[-1].encode('utf-8')
+        return (None, read_id.split(sep)[-1].encode('utf-8'))
     except IndexError:
         raise ValueError(
             "Could not extract UMI from the read ID, please"
             "check UMI is encoded in the read name")
+
+
+def get_cell_umi_read_string(read_id, sep="_"):
+    ''' extract the umi and cell barcode from the read id (input as a
+    string) using the specified separator '''
+
+    try:
+        return (read_id.split(sep)[-1].encode('utf-8'),
+                read_id.split(sep)[-2].encode('utf-8'))
+    except IndexError:
+        raise ValueError(
+            "Could not extract UMI or CB from the read ID, please"
+            "check UMI and CB are encoded in the read name:"
+            "%s" % read_id)
 
 
 def get_average_umi_distance(umis):
@@ -1315,7 +1323,7 @@ def metafetcher(bamfile, metacontig2contig, metatag):
     for metacontig in metacontig2contig:
         for contig in metacontig2contig[metacontig]:
             for read in bamfile.fetch(contig):
-                read.tags += [(metatag, metacontig)]
+                read.set_tag(metatag, metacontig)
                 yield read
 
 
@@ -1670,6 +1678,24 @@ class get_bundles:
                     self.read_events['< MAPQ threshold'] += 1
                     continue
 
+            # get the umi +/- cell barcodes
+            if self.options.ignore_umi:
+                if self.options.per_cell:
+                    umi, cell = self.barcode_getter(read)
+                    umi = ""
+                else:
+                    umi, cell = "", ""
+            else:
+                try:
+                    umi, cell = self.barcode_getter(read)
+                except KeyError:
+                    error_msg = "Read skipped, missing umi and/or cell tag"
+                    if self.read_events[error_msg] == 0:
+                        U.warn("At least one read is missing UMI and/or "
+                               "cell tag(s): %s" % read.to_string())
+                    self.read_events[error_msg] += 1
+                    continue
+
             self.current_chr = read.reference_name
 
             if self.options.per_gene:
@@ -1750,16 +1776,7 @@ class get_bundles:
                 key = (read.is_reverse, self.options.spliced & is_spliced,
                        self.options.paired*r2_pos, r_length)
 
-            # get the umi +/- cell barcode and update dictionaries
-            if self.options.ignore_umi:
-                if self.options.per_cell:
-                    umi, cell = self.barcode_getter(read)
-                    umi = ""
-                else:
-                    umi, cell = "", ""
-            else:
-                umi, cell = self.barcode_getter(read)
-
+            # update dictionaries
             key = (key, cell)
             self.update_dicts(read, read2, pos, key, umi)
 
@@ -1774,11 +1791,12 @@ class get_bundles:
 
 
 def get_gene_count_tab(infile,
-                       umi_getter=None):
+                       bc_getter=None):
 
     ''' Yields the counts per umi for each gene
 
-    umi_getter: method to get umi from read, e.g get_umi_read_id or get_umi_tag
+    bc_getter: method to get umi (plus optionally, cell barcode) from
+    read, e.g get_umi_read_id or get_umi_tag
 
 
     TODO: ADD FOLLOWING OPTION
@@ -1799,19 +1817,17 @@ def get_gene_count_tab(infile,
 
         read_id, assigned_gene = values
 
-        # only output when the contig changes to avoid problems with
-        # overlapping genes
         if assigned_gene != gene:
             if gene:
                 yield gene, counts
 
             gene = assigned_gene
-            counts = collections.Counter()
+            counts = collections.defaultdict(collections.Counter)
 
-        umi = umi_getter(read_id)
-        counts[umi] += 1
+        cell, umi = bc_getter(read_id)
+        counts[cell][umi] += 1
 
-    # yield final gene
+    # yield final values
     yield gene, counts
 
 
